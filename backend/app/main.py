@@ -1,33 +1,47 @@
-import sentry_sdk
-from fastapi import FastAPI
-from fastapi.routing import APIRoute
-from starlette.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+import os
 
-from app.api.main import api_router
-from app.core.config import settings
+app = FastAPI()
 
+BASE_DIR = "/srv/docker/volumes/group-N"
 
-def custom_generate_unique_id(route: APIRoute) -> str:
-    return f"{route.tags[0]}-{route.name}"
+class PathRequest(BaseModel):
+    path: str
 
+@app.get("/volumes")
+def list_volumes():
+    try:
+        directories = next(os.walk(BASE_DIR))[1]
+        return {"directories": directories}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error listing directories: {str(e)}")
 
-if settings.SENTRY_DSN and settings.ENVIRONMENT != "local":
-    sentry_sdk.init(dsn=str(settings.SENTRY_DSN), enable_tracing=True)
+@app.post("/volumes")
+def create_volume(request: PathRequest):
+    dir_path = os.path.join(BASE_DIR, request.path)
+    
+    if not request.path.isalnum():
+        raise HTTPException(status_code=400, detail="Path contains invalid characters.")
+    
+    if os.path.exists(dir_path):
+        raise HTTPException(status_code=400, detail="Directory already exists.")
+    
+    try:
+        os.makedirs(dir_path)
+        return {"message": "Directory created successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error creating directory: {str(e)}")
 
-app = FastAPI(
-    title=settings.PROJECT_NAME,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json",
-    generate_unique_id_function=custom_generate_unique_id,
-)
-
-# Set all CORS enabled origins
-if settings.all_cors_origins:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.all_cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-app.include_router(api_router, prefix=settings.API_V1_STR)
+@app.delete("/volumes")
+def delete_volume(request: PathRequest):
+    dir_path = os.path.join(BASE_DIR, request.path)
+    
+    if not os.path.exists(dir_path):
+        raise HTTPException(status_code=400, detail="Directory does not exist.")
+    
+    try:
+        os.rmdir(dir_path)
+        return {"message": "Directory deleted successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error deleting directory: {str(e)}")
